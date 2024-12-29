@@ -1,13 +1,18 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 import requests
 import os
 import hashlib
 import urllib.parse
 import time
+import logging
 
 app = Flask(__name__)
 
-# 定义设备信息（可根据需要调整）
+# 配置日志记录
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 定义设备信息（建议将敏感信息移至环境变量）
 device = {
     "payload": {
         "iid": "7432390588739929861",
@@ -63,8 +68,8 @@ def hashed_id(value):
         type_value = "2"  # 邮箱
     else:
         type_value = "3"  # 其他
-    hashed_id = value + "aDy0TUhtql92P7hScCs97YWMT-jub2q9"
-    hashed_value = hashlib.sha256(hashed_id.encode()).hexdigest()
+    hashed_id_str = value + "aDy0TUhtql92P7hScCs97YWMT-jub2q9"
+    hashed_value = hashlib.sha256(hashed_id_str.encode()).hexdigest()
     return f"hashed_id={hashed_value}&type={type_value}"
 
 # 获取域名信息
@@ -144,6 +149,7 @@ def getdomain(acc, session, device):
                 "message": "No data found in response"
             }
     except Exception as e:
+        logger.error(f"Error in getdomain for {acc}: {str(e)}")
         return {
             "message": f"error: {str(e)}"
         }
@@ -155,10 +161,18 @@ def check_registration(acc):
         session = requests.Session()
         result = getdomain(acc, session, device)
 
-        if result.get("message") == "success" and result["data"].get('country_code') != 'sg':
-            registration_status = True
-        elif result.get("message") == "success":
-            registration_status = False
+        if result.get("message") == "success":
+            # 根据返回数据判断是否注册
+            # 假设 'country_code' 不等于 'sg' 表示已注册
+            if result["data"].get('country_code') != 'sg':
+                registration_status = True
+            else:
+                registration_status = False
+
+            return jsonify({
+                "acc": acc,
+                "segistrationstatus": registration_status
+            }), 200
         else:
             return jsonify({
                 "acc": acc,
@@ -166,19 +180,15 @@ def check_registration(acc):
                 "message": result.get("message", "Unknown error")
             }), 500
 
-        return jsonify({
-            "acc": acc,
-            "segistrationstatus": registration_status
-        }), 200
-
     except Exception as e:
+        logger.error(f"Error in check_registration for {acc}: {str(e)}")
         return jsonify({
             "acc": acc,
             "segistrationstatus": "Error",
             "message": str(e)
         }), 500
 
-# 可选：主页提供一个表单，用户可以输入手机号或邮箱
+# 主页提供一个表单，用户可以输入手机号或邮箱
 @app.route('/', methods=['GET', 'POST'])
 def home():
     if request.method == 'POST':
@@ -210,6 +220,7 @@ def home():
                 padding: 20px 30px;
                 border-radius: 8px;
                 box-shadow: 0 0 10px rgba(0,0,0,0.1);
+                width: 400px;
             }
             input[type="text"] {
                 width: 100%;
