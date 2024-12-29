@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request
 import requests
 import os
 import hashlib
@@ -177,7 +177,7 @@ def getdomain(acc, session, device, queue):
             "message": str(e)
         })
 
-# 路由处理，检测手机号或邮箱是否注册（API 端点）
+# 路由处理，检测手机号或邮箱是否注册
 @app.route('/check', methods=['GET'])
 def check_registration():
     try:
@@ -225,10 +225,13 @@ def check_registration():
             "message": f"Error: {str(e)}"
         }), 500
 
-# 根路由提供前端界面
+# 可选：根路由提供简单说明
 @app.route('/', methods=['GET'])
 def home():
-    return render_template('index.html')
+    return jsonify({
+        "message": "Use the /check endpoint with 'acc' query parameters to check registration status.",
+        "usage": "https://web-production-02ec3.up.railway.app/check?acc=user1@example.com&acc=+1234567890"
+    }), 200
 
 if __name__ == '__main__':
     # 启动 Flask 应用，确保监听所有外部请求
