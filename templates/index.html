@@ -50,34 +50,15 @@
 <body>
     <div class="container">
         <h2>TikTok 账号检测</h2>
-        <form id="checkForm">
+        <form id="checkForm" method="POST">
             <label for="acc">手机号或邮箱：</label>
             <input type="text" id="acc" name="acc" placeholder="请输入手机号或邮箱" required>
             <button type="submit">检测</button>
         </form>
-        <h3>结果：</h3>
-        <pre id="result"></pre>
+        {% if response %}
+            <h3>结果：</h3>
+            <pre>{{ response | tojson(indent=2) }}</pre>
+        {% endif %}
     </div>
-
-    <script>
-        document.getElementById('checkForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const acc = document.getElementById('acc').value.trim();
-            const resultPre = document.getElementById('result');
-            if (!acc) {
-                resultPre.textContent = '请输入手机号或邮箱。';
-                return;
-            }
-
-            fetch(`/check/${encodeURIComponent(acc)}`)
-                .then(response => response.json())
-                .then(data => {
-                    resultPre.textContent = JSON.stringify(data, null, 2);
-                })
-                .catch(error => {
-                    resultPre.textContent = `Error: ${error}`;
-                });
-        });
-    </script>
 </body>
 </html>
