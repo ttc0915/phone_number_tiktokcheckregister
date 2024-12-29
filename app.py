@@ -1,8 +1,9 @@
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
 import requests
 import time
 import hashlib
 import urllib.parse
+import os
 
 app = Flask(__name__)
 
@@ -152,17 +153,21 @@ def check_account_status(acc):
     except Exception as e:
         return {"acc": acc, "registered": False, "message": f"Error occurred: {str(e)}"}
 
-@app.route('/check', methods=['GET'])
-def check():
-    acc = request.args.get('acc', '').strip()
-    if not acc:
+# 路由处理
+@app.route('/check/<path:acc>', methods=['GET'])
+def check(acc):
+    # 解码 URL 中的参数
+    acc_decoded = urllib.parse.unquote(acc)
+    # 添加日志记录以调试接收到的参数
+    print(f"Received acc: '{acc_decoded}'")
+    if not acc_decoded:
         return jsonify({"error": "No account provided"}), 400
-    result = check_account_status(acc)
+    result = check_account_status(acc_decoded)
     return jsonify(result)
 
 @app.route('/')
 def index():
-    return jsonify({"message": "请使用 /check?acc=手机号或邮箱 来检测 TikTok 注册状态。"})
+    return jsonify({"message": "请使用 /check/<手机号或邮箱> 来检测 TikTok 注册状态。"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
