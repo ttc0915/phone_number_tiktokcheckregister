@@ -1,13 +1,9 @@
 from flask import Flask, jsonify, request
 import requests
-import os
+import time
 import hashlib
 import urllib.parse
-import time
 import logging
-import threading
-from queue import Queue
-import re
 
 app = Flask(__name__)
 
@@ -15,11 +11,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 定义设备信息（从环境变量获取）
+# 定义设备信息
 device = {
     "payload": {
-        "iid": os.getenv("IID", "7432390588739929861"),
-        "device_id": os.getenv("DEVICE_ID", "7432390066955470341"),
+        "iid": "7432390588739929861",
+        "device_id": "7432390066955470341",
         "passport-sdk-version": "19",
         "ac": "wifi",
         "channel": "googleplay",
@@ -79,11 +75,14 @@ def hashed_id(value):
 def is_valid_acc(acc):
     email_regex = r'^[\w\.-]+@[\w\.-]+\.\w+$'
     phone_regex = r'^\+\d{10,15}$'
-    return re.match(email_regex, acc) or re.match(phone_regex, acc)
+    return bool(re.match(email_regex, acc)) or bool(re.match(phone_regex, acc))
 
-# 获取域名信息并检查账户状态
-def getdomain(acc, session, device, queue):
+# 检测手机号或邮箱状态的函数
+def check_account_status(acc):
     try:
+        session = requests.Session()
+
+        # 准备请求参数
         params = {
             'iid': device['payload']['iid'],
             'device_id': device['payload']['device_id'],
@@ -130,9 +129,11 @@ def getdomain(acc, session, device, queue):
             'ts': str(int(time.time())),
             'cdid': device['payload']['cdid']
         }
-        url_encoded_str = urllib.parse.urlencode(params, doseq=True).replace('%2A', '*')
-        url = f"https://api22-normal-c-alisg.tiktokv.com/passport/account_lookup/mobile/?{url_encoded_str}"
 
+        url_encoded_str = urllib.parse.urlencode(params, doseq=True).replace('%2A', '*')
+        url = f"https://api16-normal-useast5.tiktokv.us/passport/app/region/?{url_encoded_str}"
+
+        # 获取哈希后的手机号或邮箱
         payload = hashed_id(acc)
         headers = {
             'Accept-Encoding': 'gzip',
@@ -143,6 +144,7 @@ def getdomain(acc, session, device, queue):
             'x-vc-bdturing-sdk-version': '2.3.4.i18n',
         }
 
+        # 发送请求
         response = session.post(url, headers=headers, data=payload)
         response.raise_for_status()
         response_data = response.json()
@@ -151,33 +153,35 @@ def getdomain(acc, session, device, queue):
         if 'error_code' in response_data:
             error_code = response_data['error_code']
             if error_code == 1105:
-                queue.put({
+                return {
                     "acc": acc,
                     "segistrationstatus": "Banned"
-                })
-                return
+                }
 
-        # 根据返回的数据判断是否注册
-        if response_data.get('data', {}).get('country_code') != 'sg':
-            queue.put({
+        # 解析返回数据
+        country_code = response_data.get('data', {}).get('country_code', '')
+        if country_code != 'sg':
+            return {
                 "acc": acc,
                 "segistrationstatus": True
-            })
+            }
         else:
-            queue.put({
+            return {
                 "acc": acc,
                 "segistrationstatus": False
-            })
+            }
 
     except Exception as e:
-        logger.error(f"Error in getdomain for {acc}: {str(e)}")
-        queue.put({
+        logger.error(f"Error in check_account_status for {acc}: {str(e)}")
+        return {
             "acc": acc,
             "segistrationstatus": "Error",
             "message": str(e)
-        })
+        }
 
-# 路由处理，检测手机号或邮箱是否注册
+import re
+
+# 路由处理，检测手机号或邮箱是否注册（API 端点）
 @app.route('/check', methods=['GET'])
 def check_registration():
     try:
@@ -190,9 +194,6 @@ def check_registration():
             }), 400
 
         results = []
-        session = requests.Session()
-        queue = Queue()
-        threads = []
 
         for acc in acc_list:
             acc = acc.strip()
@@ -205,15 +206,8 @@ def check_registration():
                     "message": "Invalid account format"
                 })
                 continue
-            thread = threading.Thread(target=getdomain, args=(acc, session, device, queue))
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-
-        while not queue.empty():
-            results.append(queue.get())
+            result = check_account_status(acc)
+            results.append(result)
 
         return jsonify({
             "results": results
@@ -230,7 +224,7 @@ def check_registration():
 def home():
     return jsonify({
         "message": "Use the /check endpoint with 'acc' query parameters to check registration status.",
-        "usage": "https://web-production-02ec3.up.railway.app/check?acc=user1@example.com&acc=+1234567890"
+        "usage": "https://web-production-02ec3.up.railway.app/check?acc=+639679162897&acc=user@example.com"
     }), 200
 
 if __name__ == '__main__':
