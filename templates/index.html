@@ -93,12 +93,15 @@ user2@example.com
             loadingDiv.style.display = 'block';
             resultPre.textContent = '';
 
-            fetch('/check', {
-                method: 'POST',
+            // 构造查询参数
+            const params = new URLSearchParams();
+            accounts.forEach(acc => params.append('acc', acc));
+
+            fetch(`/check?${params.toString()}`, {
+                method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ accounts: accounts }),
             })
             .then(response => response.json())
             .then(data => {
