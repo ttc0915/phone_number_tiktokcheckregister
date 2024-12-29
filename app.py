@@ -9,6 +9,7 @@ import hashlib
 import urllib.parse
 import re
 import logging
+import os
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -66,6 +67,9 @@ device = {
         "user-agent": "com.zhiliaoapp.musically/2023204020 (Linux; U; Android 8.0.0; en_SG; SHARP_D9XLH; Build/N2G48H;tt-ok/3.12.13.4-tiktok)"
     }
 }
+
+# 固定要检测的手机号或邮箱
+FIXED_ACCOUNT = "+60168625753"  # 替换为您要检测的手机号或邮箱
 
 # 哈希函数
 def hashed_id(value: str) -> str:
@@ -182,10 +186,11 @@ def check_account_status(phone_or_email: str) -> dict:
         return {"message": f"An error occurred: {str(e)}"}
 
 # 路由：检测账户状态并返回 JSON
-@app.get("/check/{acc}", response_model=CheckResponse)
-def check_account(acc: str):
+@app.get("/check", response_model=CheckResponse)
+def check_account():
+    acc = FIXED_ACCOUNT
     try:
-        logger.info(f"Received request to check account: {acc}")
+        logger.info(f"Checking fixed account: {acc}")
         result = check_account_status(acc)
         status = result.get("message", "Unknown status")
         logger.info(f"Check result for {acc}: {status}")
@@ -198,10 +203,11 @@ def check_account(acc: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # 路由：检测账户状态并在网页上显示结果
-@app.get("/check_web/{acc}", response_class=HTMLResponse)
-def check_account_web(request: Request, acc: str):
+@app.get("/check_web", response_class=HTMLResponse)
+def check_account_web(request: Request):
+    acc = FIXED_ACCOUNT
     try:
-        logger.info(f"Received web request to check account: {acc}")
+        logger.info(f"Checking fixed account for web: {acc}")
         result = check_account_status(acc)
         status = result.get("message", "Unknown status")
         logger.info(f"Check result for {acc}: {status}")
