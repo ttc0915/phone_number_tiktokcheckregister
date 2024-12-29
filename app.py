@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request
 import requests
 import os
 import hashlib
@@ -81,7 +81,7 @@ def is_valid_acc(acc):
     phone_regex = r'^\+\d{10,15}$'
     return re.match(email_regex, acc) or re.match(phone_regex, acc)
 
-# 获取域名信息
+# 获取域名信息并检查账户状态
 def getdomain(acc, session, device, queue):
     try:
         params = {
@@ -147,7 +147,7 @@ def getdomain(acc, session, device, queue):
         response.raise_for_status()
         response_data = response.json()
 
-        # Check if account is banned
+        # 检查账户是否被封禁
         if 'error_code' in response_data:
             error_code = response_data['error_code']
             if error_code == 1105:
@@ -157,7 +157,7 @@ def getdomain(acc, session, device, queue):
                 })
                 return
 
-        # If no errors, return data
+        # 根据返回的数据判断是否注册
         if response_data.get('data', {}).get('country_code') != 'sg':
             queue.put({
                 "acc": acc,
@@ -177,12 +177,12 @@ def getdomain(acc, session, device, queue):
             "message": str(e)
         })
 
-# 新的路由处理，检测手机号或邮箱是否注册
-@app.route('/check', methods=['POST'])
+# 路由处理，检测手机号或邮箱是否注册
+@app.route('/check', methods=['GET'])
 def check_registration():
     try:
-        data = request.get_json()
-        acc_list = data.get('accounts', [])
+        # 从查询参数中获取所有 'acc' 参数
+        acc_list = request.args.getlist('acc')
 
         if not acc_list:
             return jsonify({
@@ -195,7 +195,8 @@ def check_registration():
         threads = []
 
         for acc in acc_list:
-            if not acc.strip():
+            acc = acc.strip()
+            if not acc:
                 continue
             if not is_valid_acc(acc):
                 results.append({
@@ -204,7 +205,7 @@ def check_registration():
                     "message": "Invalid account format"
                 })
                 continue
-            thread = threading.Thread(target=getdomain, args=(acc.strip(), session, device, queue))
+            thread = threading.Thread(target=getdomain, args=(acc, session, device, queue))
             threads.append(thread)
             thread.start()
 
@@ -224,10 +225,13 @@ def check_registration():
             "message": f"Error: {str(e)}"
         }), 500
 
-# 主页提供一个表单，用户可以输入手机号或邮箱
+# 可选：根路由提供简单说明
 @app.route('/', methods=['GET'])
 def home():
-    return render_template('index.html')
+    return jsonify({
+        "message": "Use the /check endpoint with 'acc' query parameters to check registration status.",
+        "usage": "https://web-production-02ec3.up.railway.app/check?acc=user1@example.com&acc=+1234567890"
+    }), 200
 
 if __name__ == '__main__':
     # 启动 Flask 应用，确保监听所有外部请求
