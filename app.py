@@ -1,24 +1,10 @@
-# app.py
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, validator
+from flask import Flask, request, jsonify, render_template
 import requests
 import time
 import hashlib
 import urllib.parse
-import re
-import logging
-import os
 
-# 配置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = FastAPI(title="TikTok Account Checker", version="1.0.0")
-
-# 配置模板路径
-templates = Jinja2Templates(directory="templates")
+app = Flask(__name__)
 
 # 定义设备信息
 device = {
@@ -68,36 +54,20 @@ device = {
     }
 }
 
-# 固定要检测的手机号或邮箱
-FIXED_ACCOUNT = "+60168625753"  # 替换为您要检测的手机号或邮箱
-
 # 哈希函数
-def hashed_id(value: str) -> str:
+def hashed_id(value):
     if "+" in value:
         type_value = "1"
     elif "@" in value:
         type_value = "2"
     else:
         type_value = "3"
-    hashed_id_str = value + "aDy0TUhtql92P7hScCs97YWMT-jub2q9"
-    hashed_value = hashlib.sha256(hashed_id_str.encode()).hexdigest()
+    hashed_id = value + "aDy0TUhtql92P7hScCs97YWMT-jub2q9"
+    hashed_value = hashlib.sha256(hashed_id.encode()).hexdigest()
     return f"hashed_id={hashed_value}&type={type_value}"
 
-# 响应模型
-class CheckResponse(BaseModel):
-    acc: str = Field(..., description="Phone number or Email to check")
-    registrationstatus: str
-
-    @validator('acc')
-    def validate_acc(cls, v):
-        phone_regex = re.compile(r'^\+?\d{10,15}$')
-        email_regex = re.compile(r'^[^@]+@[^@]+\.[^@]+$')
-        if not (phone_regex.match(v) or email_regex.match(v)):
-            raise ValueError('Invalid phone number or email format')
-        return v
-
-# 检查账户状态的函数
-def check_account_status(phone_or_email: str) -> dict:
+# 请求并解析结果
+def check_account_status(phone):
     try:
         session = requests.Session()
 
@@ -125,7 +95,7 @@ def check_account_status(phone_or_email: str) -> dict:
             'resolution': '540*960',
             'dpi': '240',
             'update_version_code': '320906',
-            '_rticket': str(int(time.time() * 1000)),
+            '_rticket': str(int(time.time())),
             'is_pad': '0',
             'current_region': device['payload']['carrier_region'],
             'app_type': 'normal',
@@ -152,8 +122,8 @@ def check_account_status(phone_or_email: str) -> dict:
         url_encoded_str = urllib.parse.urlencode(params, doseq=True).replace('%2A', '*')
         url = f"https://api16-normal-useast5.tiktokv.us/passport/app/region/?{url_encoded_str}"
 
-        # 获取哈希后的手机号或邮箱
-        payload = hashed_id(phone_or_email)
+        # 获取哈希后的手机号
+        payload = hashed_id(phone)
         headers = {
             'Accept-Encoding': 'gzip',
             'Connection': 'Keep-Alive',
@@ -164,57 +134,36 @@ def check_account_status(phone_or_email: str) -> dict:
         }
 
         # 发送请求
-        response = session.post(url, headers=headers, data=payload, timeout=10)
-        response.raise_for_status()
+        response = session.post(url, headers=headers, data=payload)
         response_data = response.json()
 
         if 'error_code' in response_data:
             error_code = response_data['error_code']
             if error_code == 1105:
-                return {"message": "Account is banned"}
+                return {"acc": phone, "registered": False}
 
         # 解析返回数据
-        country_code = response_data.get('data', {}).get('country_code', '').lower()
-        if country_code != 'sg':
-            return {"message": "Phone number or email is registered"}
+        country_code = response_data.get('data', {}).get('country_code', '')
+        if country_code.lower() != 'sg':
+            return {"acc": phone, "registered": True}
         else:
-            return {"message": "Phone number or email is not registered or inactive"}
+            return {"acc": phone, "registered": False}
 
-    except requests.exceptions.RequestException as req_err:
-        return {"message": f"Request error occurred: {str(req_err)}"}
     except Exception as e:
-        return {"message": f"An error occurred: {str(e)}"}
+        return {"acc": phone, "registered": False, "message": f"Error occurred: {str(e)}"}
 
-# 路由：检测账户状态并返回 JSON
-@app.get("/check", response_model=CheckResponse)
-def check_account():
-    acc = FIXED_ACCOUNT
-    try:
-        logger.info(f"Checking fixed account: {acc}")
-        result = check_account_status(acc)
-        status = result.get("message", "Unknown status")
-        logger.info(f"Check result for {acc}: {status}")
-        return CheckResponse(acc=acc, registrationstatus=status)
-    except ValueError as ve:
-        logger.error(f"Validation error for {acc}: {ve}")
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        logger.error(f"Unexpected error for {acc}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-# 路由：检测账户状态并在网页上显示结果
-@app.get("/check_web", response_class=HTMLResponse)
-def check_account_web(request: Request):
-    acc = FIXED_ACCOUNT
-    try:
-        logger.info(f"Checking fixed account for web: {acc}")
-        result = check_account_status(acc)
-        status = result.get("message", "Unknown status")
-        logger.info(f"Check result for {acc}: {status}")
-        return templates.TemplateResponse("result.html", {"request": request, "acc": acc, "registrationstatus": status})
-    except ValueError as ve:
-        logger.error(f"Validation error for {acc}: {ve}")
-        return templates.TemplateResponse("result.html", {"request": request, "acc": acc, "registrationstatus": str(ve)})
-    except Exception as e:
-        logger.error(f"Unexpected error for {acc}: {e}")
-        return templates.TemplateResponse("result.html", {"request": request, "acc": acc, "registrationstatus": "Internal server error"})
+@app.route('/check', methods=['POST'])
+def check():
+    data = request.get_json()
+    acc = data.get('acc', '')
+    if not acc:
+        return jsonify({"error": "No account provided"}), 400
+    result = check_account_status(acc)
+    return jsonify(result)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
