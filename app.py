@@ -1,21 +1,52 @@
-from flask import Flask, jsonify, request
+import os
+import re
 import requests
 import time
 import hashlib
 import urllib.parse
 import logging
+import json
+import redis
+import aiohttp
+import asyncio
+from flask import Flask, jsonify, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+# 如果使用 Sentry 进行错误监控，请取消注释以下两行
+# import sentry_sdk
+# from sentry_sdk.integrations.flask import FlaskIntegration
 
+# 初始化 Flask 应用
 app = Flask(__name__)
 
 # 配置日志记录
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 定义设备信息
+# 如果使用 Sentry 进行错误监控，请配置 Sentry
+# sentry_sdk.init(
+#     dsn="YOUR_SENTRY_DSN",
+#     integrations=[FlaskIntegration()],
+#     traces_sample_rate=1.0
+# )
+
+# 配置 Flask-Limiter 进行速率限制
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    default_limits=["100 per day", "10 per hour"]
+)
+
+# 连接 Redis（确保您的 Redis 服务器正在运行并配置正确）
+cache = redis.Redis(host='localhost', port=6379, db=0)
+
+# 定义设备信息（从环境变量获取）
 device = {
     "payload": {
-        "iid": "7432390588739929861",
-        "device_id": "7432390066955470341",
+        "iid": os.getenv("IID", "7432390588739929861"),
+        "device_id": os.getenv("DEVICE_ID", "7432390066955470341"),
+        "openudid": os.getenv("OPENUDID", "d34d7bc383c9a34e"),
+        "cdid": os.getenv("CDID", "841d4caf-1b90-450f-b717-b897ff555177"),
         "passport-sdk-version": "19",
         "ac": "wifi",
         "channel": "googleplay",
@@ -32,7 +63,6 @@ device = {
         "language": "en",
         "os_api": "26",
         "os_version": "8.0.0",
-        "openudid": "d34d7bc383c9a34e",
         "manifest_version_code": "2023204020",
         "resolution": "1080*1920",
         "dpi": "320",
@@ -51,7 +81,6 @@ device = {
         "op_region": "SG",
         "ac2": "wifi",
         "host_abi": "armeabi-v7a",
-        "cdid": "841d4caf-1b90-450f-b717-b897ff555177",
         "support_webview": "1",
         "okhttp_version": "4.2.137.31-tiktok",
         "use_store_region_cookie": "1",
@@ -77,9 +106,14 @@ def is_valid_acc(acc):
     phone_regex = r'^\+\d{10,15}$'
     return bool(re.match(email_regex, acc)) or bool(re.match(phone_regex, acc))
 
-# 检测手机号或邮箱状态的函数
+# 检测手机号或邮箱状态的同步函数（用于非异步处理）
 def check_account_status(acc):
     try:
+        # 检查缓存
+        cached_result = cache.get(acc)
+        if cached_result:
+            return json.loads(cached_result)
+        
         session = requests.Session()
 
         # 准备请求参数
@@ -153,23 +187,30 @@ def check_account_status(acc):
         if 'error_code' in response_data:
             error_code = response_data['error_code']
             if error_code == 1105:
-                return {
+                result = {
                     "acc": acc,
                     "segistrationstatus": "Banned"
                 }
+                # 缓存结果
+                cache.set(acc, json.dumps(result), ex=3600)  # 缓存一小时
+                return result
 
         # 解析返回数据
         country_code = response_data.get('data', {}).get('country_code', '')
         if country_code != 'sg':
-            return {
+            result = {
                 "acc": acc,
                 "segistrationstatus": True
             }
         else:
-            return {
+            result = {
                 "acc": acc,
                 "segistrationstatus": False
             }
+
+        # 缓存结果
+        cache.set(acc, json.dumps(result), ex=3600)  # 缓存一小时
+        return result
 
     except Exception as e:
         logger.error(f"Error in check_account_status for {acc}: {str(e)}")
@@ -179,11 +220,121 @@ def check_account_status(acc):
             "message": str(e)
         }
 
-import re
+# 异步检测手机号或邮箱状态的函数
+async def check_account_status_async(acc, session):
+    try:
+        # 检查缓存
+        cached_result = cache.get(acc)
+        if cached_result:
+            return json.loads(cached_result)
+        
+        # 准备请求参数
+        params = {
+            'iid': device['payload']['iid'],
+            'device_id': device['payload']['device_id'],
+            'ac': 'wifi',
+            'channel': 'googleplay',
+            'aid': '567753',
+            'app_name': 'tiktok_studio',
+            'version_code': '320906',
+            'version_name': '32.9.6',
+            'device_platform': 'android',
+            'os': 'android',
+            'ab_version': '32.9.6',
+            'ssmix': 'a',
+            'device_type': device['payload']['device_type'],
+            'device_brand': device['payload']['device_brand'],
+            'language': 'en',
+            'os_api': '28',
+            'os_version': '9',
+            'openudid': device['payload']['openudid'],
+            'manifest_version_code': '320906',
+            'resolution': '540*960',
+            'dpi': '240',
+            'update_version_code': '320906',
+            '_rticket': str(int(time.time())),
+            'is_pad': '0',
+            'current_region': device['payload']['carrier_region'],
+            'app_type': 'normal',
+            'sys_region': 'US',
+            'mcc_mnc': '45201',
+            'timezone_name': device['payload']['timezone_name'],
+            'carrier_region_v2': '452',
+            'residence': device['payload']['carrier_region'],
+            'app_language': 'en',
+            'carrier_region': device['payload']['carrier_region'],
+            'ac2': 'wifi5g',
+            'uoo': '0',
+            'op_region': device['payload']['carrier_region'],
+            'timezone_offset': device['payload']['timezone_offset'],
+            'build_number': '32.9.6',
+            'host_abi': 'arm64-v8a',
+            'locale': 'en',
+            'region': device['payload']['carrier_region'],
+            'content_language': 'en',
+            'ts': str(int(time.time())),
+            'cdid': device['payload']['cdid']
+        }
+
+        url_encoded_str = urllib.parse.urlencode(params, doseq=True).replace('%2A', '*')
+        url = f"https://api16-normal-useast5.tiktokv.us/passport/app/region/?{url_encoded_str}"
+
+        # 获取哈希后的手机号或邮箱
+        payload = hashed_id(acc)
+        headers = {
+            'Accept-Encoding': 'gzip',
+            'Connection': 'Keep-Alive',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'passport-sdk-version': '6010090',
+            'User-Agent': 'com.ss.android.tt.creator/320906 (Linux; U; Android 9; en_US; SM-G960N; Build/PQ3A.190605.07291528;tt-ok/3.12.13.4-tiktok)',
+            'x-vc-bdturing-sdk-version': '2.3.4.i18n',
+        }
+
+        async with session.post(url, headers=headers, data=payload) as response:
+            response.raise_for_status()
+            response_data = await response.json()
+
+            # 检查账户是否被封禁
+            if 'error_code' in response_data:
+                error_code = response_data['error_code']
+                if error_code == 1105:
+                    result = {
+                        "acc": acc,
+                        "segistrationstatus": "Banned"
+                    }
+                    # 缓存结果
+                    cache.set(acc, json.dumps(result), ex=3600)  # 缓存一小时
+                    return result
+
+            # 解析返回数据
+            country_code = response_data.get('data', {}).get('country_code', '')
+            if country_code != 'sg':
+                result = {
+                    "acc": acc,
+                    "segistrationstatus": True
+                }
+            else:
+                result = {
+                    "acc": acc,
+                    "segistrationstatus": False
+                }
+
+            # 缓存结果
+            cache.set(acc, json.dumps(result), ex=3600)  # 缓存一小时
+            return result
+
+    except Exception as e:
+        logger.error(f"Error in check_account_status_async for {acc}: {str(e)}")
+        return {
+            "acc": acc,
+            "segistrationstatus": "Error",
+            "message": str(e)
+        }
 
 # 路由处理，检测手机号或邮箱是否注册（API 端点）
 @app.route('/check', methods=['GET'])
-def check_registration():
+@limiter.limit("10 per minute")  # 每分钟最多10次请求
+async def check_registration_async():
     try:
         # 从查询参数中获取所有 'acc' 参数
         acc_list = request.args.getlist('acc')
@@ -194,27 +345,30 @@ def check_registration():
             }), 400
 
         results = []
-
-        for acc in acc_list:
-            acc = acc.strip()
-            if not acc:
-                continue
-            if not is_valid_acc(acc):
-                results.append({
-                    "acc": acc,
-                    "segistrationstatus": "Error",
-                    "message": "Invalid account format"
-                })
-                continue
-            result = check_account_status(acc)
-            results.append(result)
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            for acc in acc_list:
+                acc = acc.strip()
+                if not acc:
+                    continue
+                if not is_valid_acc(acc):
+                    results.append({
+                        "acc": acc,
+                        "segistrationstatus": "Error",
+                        "message": "Invalid account format"
+                    })
+                    continue
+                tasks.append(check_account_status_async(acc, session))
+            
+            responses = await asyncio.gather(*tasks)
+            results.extend(responses)
 
         return jsonify({
             "results": results
         }), 200
 
     except Exception as e:
-        logger.error(f"Error in check_registration: {str(e)}")
+        logger.error(f"Error in check_registration_async: {str(e)}")
         return jsonify({
             "message": f"Error: {str(e)}"
         }), 500
@@ -224,7 +378,7 @@ def check_registration():
 def home():
     return jsonify({
         "message": "Use the /check endpoint with 'acc' query parameters to check registration status.",
-        "usage": "https://web-production-02ec3.up.railway.app/check?acc=+639679162897&acc=user@example.com"
+        "usage": "https://web-production-02ec3.up.railway.app/check?acc=%2B639679162897&acc=user@example.com"
     }), 200
 
 if __name__ == '__main__':
