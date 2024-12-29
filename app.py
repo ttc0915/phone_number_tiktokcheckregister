@@ -5,6 +5,9 @@ import hashlib
 import urllib.parse
 import time
 import logging
+import threading
+from queue import Queue
+import re
 
 app = Flask(__name__)
 
@@ -12,11 +15,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 定义设备信息（建议将敏感信息移至环境变量）
+# 定义设备信息（从环境变量获取）
 device = {
     "payload": {
-        "iid": "7432390588739929861",
-        "device_id": "7432390066955470341",
+        "iid": os.getenv("IID", "7432390588739929861"),
+        "device_id": os.getenv("DEVICE_ID", "7432390066955470341"),
         "passport-sdk-version": "19",
         "ac": "wifi",
         "channel": "googleplay",
@@ -72,8 +75,14 @@ def hashed_id(value):
     hashed_value = hashlib.sha256(hashed_id_str.encode()).hexdigest()
     return f"hashed_id={hashed_value}&type={type_value}"
 
+# 输入验证函数
+def is_valid_acc(acc):
+    email_regex = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+    phone_regex = r'^\+\d{10,15}$'
+    return re.match(email_regex, acc) or re.match(phone_regex, acc)
+
 # 获取域名信息
-def getdomain(acc, session, device):
+def getdomain(acc, session, device, queue):
     try:
         params = {
             'iid': device['payload']['iid'],
@@ -136,135 +145,89 @@ def getdomain(acc, session, device):
 
         response = session.post(url, headers=headers, data=payload)
         response.raise_for_status()
-        response_json = response.json()
+        response_data = response.json()
 
-        # 检查响应中是否包含 'data' 字段
-        if 'data' in response_json:
-            return {
-                "data": response_json['data'],
-                "message": "success"
-            }
+        # Check if account is banned
+        if 'error_code' in response_data:
+            error_code = response_data['error_code']
+            if error_code == 1105:
+                queue.put({
+                    "acc": acc,
+                    "segistrationstatus": "Banned"
+                })
+                return
+
+        # If no errors, return data
+        if response_data.get('data', {}).get('country_code') != 'sg':
+            queue.put({
+                "acc": acc,
+                "segistrationstatus": True
+            })
         else:
-            return {
-                "message": "No data found in response"
-            }
+            queue.put({
+                "acc": acc,
+                "segistrationstatus": False
+            })
+
     except Exception as e:
         logger.error(f"Error in getdomain for {acc}: {str(e)}")
-        return {
-            "message": f"error: {str(e)}"
-        }
-
-# 新的路由处理，检测手机号或邮箱是否注册
-@app.route('/check/<acc>', methods=['GET'])
-def check_registration(acc):
-    try:
-        session = requests.Session()
-        result = getdomain(acc, session, device)
-
-        if result.get("message") == "success":
-            # 根据返回数据判断是否注册
-            # 假设 'country_code' 不等于 'sg' 表示已注册
-            if result["data"].get('country_code') != 'sg':
-                registration_status = True
-            else:
-                registration_status = False
-
-            return jsonify({
-                "acc": acc,
-                "segistrationstatus": registration_status
-            }), 200
-        else:
-            return jsonify({
-                "acc": acc,
-                "segistrationstatus": "Error",
-                "message": result.get("message", "Unknown error")
-            }), 500
-
-    except Exception as e:
-        logger.error(f"Error in check_registration for {acc}: {str(e)}")
-        return jsonify({
+        queue.put({
             "acc": acc,
             "segistrationstatus": "Error",
             "message": str(e)
+        })
+
+# 新的路由处理，检测手机号或邮箱是否注册
+@app.route('/check', methods=['POST'])
+def check_registration():
+    try:
+        data = request.get_json()
+        acc_list = data.get('accounts', [])
+
+        if not acc_list:
+            return jsonify({
+                "message": "No accounts provided"
+            }), 400
+
+        results = []
+        session = requests.Session()
+        queue = Queue()
+        threads = []
+
+        for acc in acc_list:
+            if not acc.strip():
+                continue
+            if not is_valid_acc(acc):
+                results.append({
+                    "acc": acc,
+                    "segistrationstatus": "Error",
+                    "message": "Invalid account format"
+                })
+                continue
+            thread = threading.Thread(target=getdomain, args=(acc.strip(), session, device, queue))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        while not queue.empty():
+            results.append(queue.get())
+
+        return jsonify({
+            "results": results
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error in check_registration: {str(e)}")
+        return jsonify({
+            "message": f"Error: {str(e)}"
         }), 500
 
 # 主页提供一个表单，用户可以输入手机号或邮箱
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/', methods=['GET'])
 def home():
-    if request.method == 'POST':
-        acc = request.form.get('acc').strip()
-        if not acc:
-            return jsonify({
-                "acc": acc,
-                "segistrationstatus": "Error",
-                "message": "No account provided"
-            }), 400
-        return check_registration(acc)
-    return '''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>TikTok 账号检测</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                background-color: #f2f2f2;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
-            }
-            .container {
-                background-color: #fff;
-                padding: 20px 30px;
-                border-radius: 8px;
-                box-shadow: 0 0 10px rgba(0,0,0,0.1);
-                width: 400px;
-            }
-            input[type="text"] {
-                width: 100%;
-                padding: 10px;
-                margin: 10px 0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-            }
-            button {
-                padding: 10px 20px;
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-            }
-            button:hover {
-                background-color: #45a049;
-            }
-            pre {
-                background-color: #f4f4f4;
-                padding: 10px;
-                border-radius: 4px;
-                margin-top: 10px;
-                overflow-x: auto;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h2>TikTok 账号检测</h2>
-            <form method="POST">
-                <label for="acc">手机号或邮箱：</label>
-                <input type="text" id="acc" name="acc" placeholder="请输入手机号或邮箱" required>
-                <button type="submit">检测</button>
-            </form>
-            {% if response %}
-                <h3>结果：</h3>
-                <pre>{{ response | tojson(indent=2) }}</pre>
-            {% endif %}
-        </div>
-    </body>
-    </html>
-    '''
+    return render_template('index.html')
 
 if __name__ == '__main__':
     # 启动 Flask 应用，确保监听所有外部请求
