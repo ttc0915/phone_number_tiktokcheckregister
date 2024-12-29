@@ -1,0 +1,25 @@
+<!-- templates/result.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Account Status</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 50px; background-color: #f9f9f9; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
+        .result { padding: 20px; border: 1px solid #ccc; border-radius: 5px; background-color: #fafafa; }
+        .success { color: green; }
+        .failure { color: red; }
+        h1 { text-align: center; color: #333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Account Status Checker</h1>
+        <div class="result">
+            <p><strong>Account:</strong> {{ acc }}</p>
+            <p><strong>Registration Status:</strong> {{ registrationstatus }}</p>
+        </div>
+    </div>
+</body>
+</html>
