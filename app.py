@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field, validator
 import requests
 import time
 import hashlib
 import urllib.parse
+import re
 
 app = FastAPI(title="TikTok Account Checker", version="1.0.0")
 
@@ -69,8 +70,16 @@ def hashed_id(value: str) -> str:
 
 # 响应模型
 class CheckResponse(BaseModel):
-    acc: str
+    acc: str = Field(..., description="Phone number or Email to check")
     registrationstatus: str
+
+    @validator('acc')
+    def validate_acc(cls, v):
+        phone_regex = re.compile(r'^\+?\d{10,15}$')
+        email_regex = re.compile(r'^[^@]+@[^@]+\.[^@]+$')
+        if not (phone_regex.match(v) or email_regex.match(v)):
+            raise ValueError('Invalid phone number or email format')
+        return v
 
 # 检查账户状态的函数
 def check_account_status(phone_or_email: str) -> dict:
@@ -161,13 +170,12 @@ def check_account_status(phone_or_email: str) -> dict:
     except Exception as e:
         return {"message": f"An error occurred: {str(e)}"}
 
-# API 端点
-@app.get("/check", response_model=CheckResponse)
-def check_account(acc: str = Query(..., description="Phone number or Email to check")):
-    if not acc:
-        raise HTTPException(status_code=400, detail="Account (phone/email) parameter is required.")
-    
-    result = check_account_status(acc)
-    status = result.get("message", "Unknown status")
-    
-    return CheckResponse(acc=acc, registrationstatus=status)
+# API 端点，接受路径参数
+@app.get("/check/{acc}", response_model=CheckResponse)
+def check_account(acc: str):
+    try:
+        result = check_account_status(acc)
+        status = result.get("message", "Unknown status")
+        return CheckResponse(acc=acc, registrationstatus=status)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
