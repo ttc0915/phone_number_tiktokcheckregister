@@ -1,13 +1,25 @@
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+# app.py
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field, validator
 import requests
 import time
 import hashlib
 import urllib.parse
+import re
+import logging
+
+# 配置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TikTok Account Checker", version="1.0.0")
 
-# Define device information
+# 配置模板路径
+templates = Jinja2Templates(directory="templates")
+
+# 定义设备信息
 device = {
     "payload": {
         "iid": "7432390588739929861",
@@ -55,7 +67,7 @@ device = {
     }
 }
 
-# Hashing function
+# 哈希函数
 def hashed_id(value: str) -> str:
     if "+" in value:
         type_value = "1"
@@ -67,17 +79,25 @@ def hashed_id(value: str) -> str:
     hashed_value = hashlib.sha256(hashed_id_str.encode()).hexdigest()
     return f"hashed_id={hashed_value}&type={type_value}"
 
-# Response model
+# 响应模型
 class CheckResponse(BaseModel):
-    acc: str
+    acc: str = Field(..., description="Phone number or Email to check")
     registrationstatus: str
 
-# Function to check account status
+    @validator('acc')
+    def validate_acc(cls, v):
+        phone_regex = re.compile(r'^\+?\d{10,15}$')
+        email_regex = re.compile(r'^[^@]+@[^@]+\.[^@]+$')
+        if not (phone_regex.match(v) or email_regex.match(v)):
+            raise ValueError('Invalid phone number or email format')
+        return v
+
+# 检查账户状态的函数
 def check_account_status(phone_or_email: str) -> dict:
     try:
         session = requests.Session()
 
-        # Prepare request parameters
+        # 准备请求参数
         params = {
             'iid': device['payload']['iid'],
             'device_id': device['payload']['device_id'],
@@ -128,7 +148,7 @@ def check_account_status(phone_or_email: str) -> dict:
         url_encoded_str = urllib.parse.urlencode(params, doseq=True).replace('%2A', '*')
         url = f"https://api16-normal-useast5.tiktokv.us/passport/app/region/?{url_encoded_str}"
 
-        # Get hashed phone or email
+        # 获取哈希后的手机号或邮箱
         payload = hashed_id(phone_or_email)
         headers = {
             'Accept-Encoding': 'gzip',
@@ -139,7 +159,7 @@ def check_account_status(phone_or_email: str) -> dict:
             'x-vc-bdturing-sdk-version': '2.3.4.i18n',
         }
 
-        # Send request
+        # 发送请求
         response = session.post(url, headers=headers, data=payload, timeout=10)
         response.raise_for_status()
         response_data = response.json()
@@ -149,9 +169,9 @@ def check_account_status(phone_or_email: str) -> dict:
             if error_code == 1105:
                 return {"message": "Account is banned"}
 
-        # Parse returned data
-        country_code = response_data.get('data', {}).get('country_code', '')
-        if country_code.lower() != 'sg':
+        # 解析返回数据
+        country_code = response_data.get('data', {}).get('country_code', '').lower()
+        if country_code != 'sg':
             return {"message": "Phone number or email is registered"}
         else:
             return {"message": "Phone number or email is not registered or inactive"}
@@ -161,13 +181,34 @@ def check_account_status(phone_or_email: str) -> dict:
     except Exception as e:
         return {"message": f"An error occurred: {str(e)}"}
 
-# API endpoint
-@app.get("/check", response_model=CheckResponse)
-def check_account(acc: str = Query(..., description="Phone number or Email to check")):
-    if not acc:
-        raise HTTPException(status_code=400, detail="Account (phone/email) parameter is required.")
-    
-    result = check_account_status(acc)
-    status = result.get("message", "Unknown status")
-    
-    return CheckResponse(acc=acc, registrationstatus=status)
+# 路由：检测账户状态并返回 JSON
+@app.get("/check/{acc}", response_model=CheckResponse)
+def check_account(acc: str):
+    try:
+        logger.info(f"Received request to check account: {acc}")
+        result = check_account_status(acc)
+        status = result.get("message", "Unknown status")
+        logger.info(f"Check result for {acc}: {status}")
+        return CheckResponse(acc=acc, registrationstatus=status)
+    except ValueError as ve:
+        logger.error(f"Validation error for {acc}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Unexpected error for {acc}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+# 路由：检测账户状态并在网页上显示结果
+@app.get("/check_web/{acc}", response_class=HTMLResponse)
+def check_account_web(request: Request, acc: str):
+    try:
+        logger.info(f"Received web request to check account: {acc}")
+        result = check_account_status(acc)
+        status = result.get("message", "Unknown status")
+        logger.info(f"Check result for {acc}: {status}")
+        return templates.TemplateResponse("result.html", {"request": request, "acc": acc, "registrationstatus": status})
+    except ValueError as ve:
+        logger.error(f"Validation error for {acc}: {ve}")
+        return templates.TemplateResponse("result.html", {"request": request, "acc": acc, "registrationstatus": str(ve)})
+    except Exception as e:
+        logger.error(f"Unexpected error for {acc}: {e}")
+        return templates.TemplateResponse("result.html", {"request": request, "acc": acc, "registrationstatus": "Internal server error"})
