@@ -1,14 +1,13 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, validator
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 import requests
 import time
 import hashlib
 import urllib.parse
-import re
 
 app = FastAPI(title="TikTok Account Checker", version="1.0.0")
 
-# 定义设备信息
+# Define device information
 device = {
     "payload": {
         "iid": "7432390588739929861",
@@ -56,7 +55,7 @@ device = {
     }
 }
 
-# 哈希函数
+# Hashing function
 def hashed_id(value: str) -> str:
     if "+" in value:
         type_value = "1"
@@ -68,25 +67,17 @@ def hashed_id(value: str) -> str:
     hashed_value = hashlib.sha256(hashed_id_str.encode()).hexdigest()
     return f"hashed_id={hashed_value}&type={type_value}"
 
-# 响应模型
+# Response model
 class CheckResponse(BaseModel):
-    acc: str = Field(..., description="Phone number or Email to check")
+    acc: str
     registrationstatus: str
 
-    @validator('acc')
-    def validate_acc(cls, v):
-        phone_regex = re.compile(r'^\+?\d{10,15}$')
-        email_regex = re.compile(r'^[^@]+@[^@]+\.[^@]+$')
-        if not (phone_regex.match(v) or email_regex.match(v)):
-            raise ValueError('Invalid phone number or email format')
-        return v
-
-# 检查账户状态的函数
+# Function to check account status
 def check_account_status(phone_or_email: str) -> dict:
     try:
         session = requests.Session()
 
-        # 准备请求参数
+        # Prepare request parameters
         params = {
             'iid': device['payload']['iid'],
             'device_id': device['payload']['device_id'],
@@ -137,7 +128,7 @@ def check_account_status(phone_or_email: str) -> dict:
         url_encoded_str = urllib.parse.urlencode(params, doseq=True).replace('%2A', '*')
         url = f"https://api16-normal-useast5.tiktokv.us/passport/app/region/?{url_encoded_str}"
 
-        # 获取哈希后的手机号或邮箱
+        # Get hashed phone or email
         payload = hashed_id(phone_or_email)
         headers = {
             'Accept-Encoding': 'gzip',
@@ -148,7 +139,7 @@ def check_account_status(phone_or_email: str) -> dict:
             'x-vc-bdturing-sdk-version': '2.3.4.i18n',
         }
 
-        # 发送请求
+        # Send request
         response = session.post(url, headers=headers, data=payload, timeout=10)
         response.raise_for_status()
         response_data = response.json()
@@ -158,7 +149,7 @@ def check_account_status(phone_or_email: str) -> dict:
             if error_code == 1105:
                 return {"message": "Account is banned"}
 
-        # 解析返回数据
+        # Parse returned data
         country_code = response_data.get('data', {}).get('country_code', '')
         if country_code.lower() != 'sg':
             return {"message": "Phone number or email is registered"}
@@ -170,12 +161,13 @@ def check_account_status(phone_or_email: str) -> dict:
     except Exception as e:
         return {"message": f"An error occurred: {str(e)}"}
 
-# API 端点，接受路径参数
-@app.get("/check/{acc}", response_model=CheckResponse)
-def check_account(acc: str):
-    try:
-        result = check_account_status(acc)
-        status = result.get("message", "Unknown status")
-        return CheckResponse(acc=acc, registrationstatus=status)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+# API endpoint
+@app.get("/check", response_model=CheckResponse)
+def check_account(acc: str = Query(..., description="Phone number or Email to check")):
+    if not acc:
+        raise HTTPException(status_code=400, detail="Account (phone/email) parameter is required.")
+    
+    result = check_account_status(acc)
+    status = result.get("message", "Unknown status")
+    
+    return CheckResponse(acc=acc, registrationstatus=status)
