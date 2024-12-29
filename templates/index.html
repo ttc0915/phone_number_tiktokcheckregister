@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TikTok 账号检测</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f2f2f2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .container {
+            background-color: #fff;
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            width: 400px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>TikTok 账号检测</h2>
+        <form id="checkForm">
+            <label for="acc">手机号或邮箱：</label>
+            <input type="text" id="acc" name="acc" placeholder="请输入手机号或邮箱" required>
+            <button type="submit">检测</button>
+        </form>
+        <h3>结果：</h3>
+        <pre id="result"></pre>
+    </div>
+
+    <script>
+        document.getElementById('checkForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const acc = document.getElementById('acc').value.trim();
+            const resultPre = document.getElementById('result');
+            if (!acc) {
+                resultPre.textContent = '请输入手机号或邮箱。';
+                return;
+            }
+
+            fetch(`/check/${encodeURIComponent(acc)}`)
+                .then(response => response.json())
+                .then(data => {
+                    resultPre.textContent = JSON.stringify(data, null, 2);
+                })
+                .catch(error => {
+                    resultPre.textContent = `Error: ${error}`;
+                });
+        });
+    </script>
+</body>
+</html>
