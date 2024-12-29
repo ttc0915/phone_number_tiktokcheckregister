@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 import requests
 import time
 import hashlib
@@ -62,12 +62,12 @@ def hashed_id(value):
         type_value = "2"
     else:
         type_value = "3"
-    hashed_id = value + "aDy0TUhtql92P7hScCs97YWMT-jub2q9"
-    hashed_value = hashlib.sha256(hashed_id.encode()).hexdigest()
+    hashed_id_str = value + "aDy0TUhtql92P7hScCs97YWMT-jub2q9"
+    hashed_value = hashlib.sha256(hashed_id_str.encode()).hexdigest()
     return f"hashed_id={hashed_value}&type={type_value}"
 
 # 请求并解析结果
-def check_account_status(phone):
+def check_account_status(acc):
     try:
         session = requests.Session()
 
@@ -122,8 +122,8 @@ def check_account_status(phone):
         url_encoded_str = urllib.parse.urlencode(params, doseq=True).replace('%2A', '*')
         url = f"https://api16-normal-useast5.tiktokv.us/passport/app/region/?{url_encoded_str}"
 
-        # 获取哈希后的手机号
-        payload = hashed_id(phone)
+        # 获取哈希后的手机号或邮箱
+        payload = hashed_id(acc)
         headers = {
             'Accept-Encoding': 'gzip',
             'Connection': 'Keep-Alive',
@@ -140,30 +140,29 @@ def check_account_status(phone):
         if 'error_code' in response_data:
             error_code = response_data['error_code']
             if error_code == 1105:
-                return {"acc": phone, "registered": False}
+                return {"acc": acc, "registered": False}
 
         # 解析返回数据
         country_code = response_data.get('data', {}).get('country_code', '')
         if country_code.lower() != 'sg':
-            return {"acc": phone, "registered": True}
+            return {"acc": acc, "registered": True}
         else:
-            return {"acc": phone, "registered": False}
+            return {"acc": acc, "registered": False}
 
     except Exception as e:
-        return {"acc": phone, "registered": False, "message": f"Error occurred: {str(e)}"}
+        return {"acc": acc, "registered": False, "message": f"Error occurred: {str(e)}"}
 
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/check', methods=['POST'])
+@app.route('/check', methods=['GET'])
 def check():
-    data = request.get_json()
-    acc = data.get('acc', '')
+    acc = request.args.get('acc', '').strip()
     if not acc:
         return jsonify({"error": "No account provided"}), 400
     result = check_account_status(acc)
     return jsonify(result)
 
+@app.route('/')
+def index():
+    return jsonify({"message": "请使用 /check?acc=手机号或邮箱 来检测 TikTok 注册状态。"})
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
