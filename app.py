@@ -4,6 +4,7 @@ import time
 import hashlib
 import urllib.parse
 import os
+import logging
 
 app = Flask(__name__)
 
@@ -168,6 +169,18 @@ def check(acc):
 @app.route('/')
 def index():
     return jsonify({"message": "请使用 /check/<手机号或邮箱> 来检测 TikTok 注册状态。"})
+
+logging.basicConfig(level=logging.INFO)
+
+@app.route('/check/<path:acc>', methods=['GET'])
+def check(acc):
+    acc_decoded = urllib.parse.unquote(acc)
+    client_ip = request.remote_addr
+    logging.info(f"Received acc: '{acc_decoded}' from IP: {client_ip}")
+    if not acc_decoded:
+        return jsonify({"error": "No account provided"}), 400
+    result = check_account_status(acc_decoded)
+    return jsonify(result)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
