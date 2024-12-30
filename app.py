@@ -1,4 +1,5 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 import requests
 import time
 import hashlib
@@ -7,6 +8,16 @@ import os
 import logging
 
 app = Flask(__name__)
+CORS(app)  # 启用 CORS，以允许跨域请求
+
+# 配置日志记录
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 # 定义设备信息
 device = {
@@ -135,9 +146,14 @@ def check_account_status(acc):
             'x-vc-bdturing-sdk-version': '2.3.4.i18n',
         }
 
+        logging.info(f"Sending POST request to {url} with payload: {payload}")
+        
         # 发送请求
-        response = session.post(url, headers=headers, data=payload)
+        response = session.post(url, headers=headers, data=payload, timeout=10)
+        response.raise_for_status()  # 检查HTTP请求是否成功
         response_data = response.json()
+
+        logging.info(f"Received response: {response_data}")
 
         if 'error_code' in response_data:
             error_code = response_data['error_code']
@@ -151,36 +167,40 @@ def check_account_status(acc):
         else:
             return {"acc": acc, "registered": False}
 
+    except requests.exceptions.RequestException as req_err:
+        logging.error(f"Request error: {req_err}")
+        return {"acc": acc, "registered": False, "message": f"Request error: {str(req_err)}"}
+    except ValueError as val_err:
+        logging.error(f"JSON decode error: {val_err}")
+        return {"acc": acc, "registered": False, "message": "Invalid JSON response"}
     except Exception as e:
-        return {"acc": acc, "registered": False, "message": f"Error occurred: {str(e)}"}
+        logging.error(f"Unexpected error: {e}")
+        return {"acc": acc, "registered": False, "message": f"Unexpected error: {str(e)}"}
 
 # 路由处理
 @app.route('/check/<path:acc>', methods=['GET'])
 def check(acc):
-    # 解码 URL 中的参数
-    acc_decoded = urllib.parse.unquote(acc)
-    # 添加日志记录以调试接收到的参数
-    print(f"Received acc: '{acc_decoded}'")
-    if not acc_decoded:
-        return jsonify({"error": "No account provided"}), 400
-    result = check_account_status(acc_decoded)
-    return jsonify(result)
+    try:
+        # 解码 URL 中的参数
+        acc_decoded = urllib.parse.unquote(acc)
+        client_ip = request.remote_addr
+        logging.info(f"Received acc: '{acc_decoded}' from IP: {client_ip}")
+
+        if not acc_decoded:
+            logging.warning("No account provided in the request")
+            return jsonify({"error": "No account provided"}), 400
+
+        result = check_account_status(acc_decoded)
+        return jsonify(result)
+    except Exception as e:
+        logging.error(f"Error in /check route: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/')
 def index():
     return jsonify({"message": "请使用 /check/<手机号或邮箱> 来检测 TikTok 注册状态。"})
 
-logging.basicConfig(level=logging.INFO)
-
-@app.route('/check/<path:acc>', methods=['GET'])
-def check(acc):
-    acc_decoded = urllib.parse.unquote(acc)
-    client_ip = request.remote_addr
-    logging.info(f"Received acc: '{acc_decoded}' from IP: {client_ip}")
-    if not acc_decoded:
-        return jsonify({"error": "No account provided"}), 400
-    result = check_account_status(acc_decoded)
-    return jsonify(result)
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    port = int(os.environ.get('PORT', 5000))
+    logging.info(f"Starting Flask app on port {port}")
+    app.run(host='0.0.0.0', port=port)
